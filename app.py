@@ -7,18 +7,16 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Inventory Strategy Audit", layout="wide")
 
 # --- Custom CSS for Zoom Toolbar ---
-# This adds 60px of padding to the left of the sidebar content 
-# to ensure the Zoom toolbar doesn't overlap your sliders.
+# Fixed the 'unsafe_allow_html' parameter here
 st.markdown("""
     <style>
-    [data-testid="stSidebarNav"] + div {
-        padding-left: 60px;
-    }
+    /* Adds padding to the left of the sidebar content to dodge the Zoom toolbar */
     section[data-testid="stSidebar"] > div {
         padding-left: 60px;
+        padding-right: 10px;
     }
     </style>
-    """, unsafe_index=True)
+    """, unsafe_allow_html=True)
 
 st.title("💰 Inventory Simulation: Financial & Operational Audit")
 
@@ -41,7 +39,7 @@ review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
 if 'demand_data' not in st.session_state or st.sidebar.button("🔄 Generate New Demand Scenario"):
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
-# Adjust demand array if simulation days slider moves
+# Sync demand array length with slider
 if len(st.session_state['demand_data']) != sim_days:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
@@ -89,13 +87,13 @@ def run_simulation():
         inv_rop[t] = max(0, pot_rop - daily_demand_arr[t])
         inv_p[t] = max(0, pot_p - daily_demand_arr[t])
         
-        # ROP Logic
+        # ROP Logic (Continuous)
         pos_rop = inv_rop[t] + sum(q for d, q in pend_rop if d > t)
         if pos_rop <= rop:
             pend_rop.append((t + lead_time, eoq))
             tri_rop.append((t, inv_rop[t]))
             
-        # P-System Logic
+        # P-System Logic (Periodic)
         if t % review_period == 0:
             pos_p = inv_p[t] + sum(q for d, q in pend_p if d > t)
             order_qty = max(0, target_level - pos_p)
