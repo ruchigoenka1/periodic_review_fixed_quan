@@ -36,7 +36,7 @@ order_cost = st.sidebar.number_input("Ordering Cost ($/order)", value=100.0)
 holding_cost_annual = st.sidebar.number_input("Holding Cost ($/unit/year)", value=2.0)
 stockout_penalty = st.sidebar.number_input("Stockout Penalty ($/unit)", value=5.0)
 service_level = st.sidebar.select_slider("Service Level (%)", options=[80, 85, 90, 95, 98, 99], value=95)
-review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
+review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 100, 7)
 
 # --- Demand State Management ---
 if 'demand_data' not in st.session_state or st.session_state['demand_data'] is None or len(st.session_state['demand_data']) != sim_days:
