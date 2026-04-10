@@ -9,7 +9,6 @@ st.set_page_config(page_title="Inventory Strategy Audit", layout="wide")
 # --- Custom CSS for Zoom Toolbar Padding ---
 st.markdown("""
     <style>
-    /* Adds padding to the left of the sidebar content to dodge the Zoom toolbar */
     section[data-testid="stSidebar"] > div {
         padding-left: 70px;
         padding-right: 15px;
@@ -21,9 +20,7 @@ st.title("💰 Inventory Simulation: Financial & Operational Audit")
 
 # --- Sidebar Inputs & Reset Button ---
 st.sidebar.header("Controls")
-# Moved the button to the top for visibility
 if st.sidebar.button("🔄 Generate New Demand Scenario"):
-    # Force a recalculation of demand by clearing the session state key
     if 'demand_data' in st.session_state:
         del st.session_state['demand_data']
     st.rerun()
@@ -47,7 +44,6 @@ review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
 if 'demand_data' not in st.session_state:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
-# Sync demand array length with slider
 if len(st.session_state['demand_data']) != sim_days:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
@@ -68,7 +64,7 @@ rop = (avg_demand * lead_time) + ss_rop
 ss_p = z * std_demand * np.sqrt(review_period + lead_time)
 target_level = (avg_demand * (review_period + lead_time)) + ss_p
 
-# --- Top Metrics ---
+# --- Metrics Row ---
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("EOQ (Fixed Q)", f"{int(eoq)}")
 m2.metric("Reorder Point (ROP)", f"{int(rop)}")
@@ -79,8 +75,11 @@ m4.metric("Safety Stock (P)", f"{int(ss_p)}")
 def run_simulation():
     days = np.arange(sim_days)
     inv_rop = np.zeros(sim_days); inv_rop[0] = eoq + ss_rop
+    pos_rop_log = np.zeros(sim_days)
     pend_rop = []; tri_rop = []; so_units_rop = 0
+    
     inv_p = np.zeros(sim_days); inv_p[0] = target_level
+    pos_p_log = np.zeros(sim_days)
     pend_p = []; tri_p = []; so_units_p = 0
 
     for t in range(1, sim_days):
@@ -97,23 +96,26 @@ def run_simulation():
         
         # ROP Logic
         pos_rop = inv_rop[t] + sum(q for d, q in pend_rop if d > t)
+        pos_rop_log[t] = pos_rop
         if pos_rop <= rop:
             pend_rop.append((t + lead_time, eoq))
             tri_rop.append((t, inv_rop[t]))
             
         # P-System Logic
+        pos_p = inv_p[t] + sum(q for d, q in pend_p if d > t)
         if t % review_period == 0:
-            pos_p = inv_p[t] + sum(q for d, q in pend_p if d > t)
             order_qty = max(0, target_level - pos_p)
             if order_qty > 0:
                 pend_p.append((t + lead_time, order_qty))
                 tri_p.append((t, inv_p[t]))
+                pos_p += order_qty # Update position immediately after ordering
+        pos_p_log[t] = pos_p
                 
-    return days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_units_rop, so_units_p
+    return days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_units_rop, so_units_p, pos_rop_log, pos_p_log
 
-days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_rop, so_p = run_simulation()
+days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_rop, so_p, pos_rop_log, pos_p_log = run_simulation()
 
-# --- Financial Analysis Section ---
+# --- Financial Summary ---
 hold_rop = inv_rop.sum() * holding_cost_daily
 ord_rop = len(tri_rop) * order_cost
 stock_rop = so_rop * stockout_penalty
@@ -139,36 +141,46 @@ with c2:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # --- Visualization Section ---
-st.subheader("📈 Physical Stock Levels")
+st.subheader("📈 Inventory Levels: Physical vs. Position")
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=days, y=inv_rop, name="Continuous Stock", line=dict(color='#636EFA')))
-fig.add_trace(go.Scatter(x=days, y=inv_p, name="Periodic Stock", line=dict(color='#00CC96')))
+
+# Physical Stock Lines
+fig.add_trace(go.Scatter(x=days, y=inv_rop, name="Continuous (Physical)", line=dict(color='#636EFA', width=3)))
+fig.add_trace(go.Scatter(x=days, y=inv_p, name="Periodic (Physical)", line=dict(color='#00CC96', width=3)))
+
+# Total Inventory Position (Dotted Lines)
+fig.add_trace(go.Scatter(x=days, y=pos_rop_log, name="Continuous (Position)", line=dict(color='#636EFA', width=1, dash='dot')))
+fig.add_trace(go.Scatter(x=days, y=pos_p_log, name="Periodic (Position)", line=dict(color='#00CC96', width=1, dash='dot')))
+
+# Markers
 if tri_rop:
     rx, ry = zip(*tri_rop); fig.add_trace(go.Scatter(x=rx, y=ry, mode='markers', name='ROP Trigger', marker=dict(symbol='diamond', color='white', size=8)))
 if tri_p:
     px, py = zip(*tri_p); fig.add_trace(go.Scatter(x=px, y=py, mode='markers', name='P-Review Point', marker=dict(symbol='circle', color='yellow', size=8)))
 
+# Baselines
 fig.add_hline(y=target_level, line_dash="dash", line_color="orange", opacity=0.4, annotation_text="Target S")
 fig.add_hline(y=rop, line_dash="dot", line_color="red", opacity=0.4, annotation_text="ROP")
-fig.update_layout(template="plotly_dark", height=500, hovermode="x unified", legend=dict(orientation="h", y=1.1))
+
+fig.update_layout(template="plotly_dark", height=600, hovermode="x unified", legend=dict(orientation="h", y=1.08))
 st.plotly_chart(fig, use_container_width=True)
 
 # --- Audit Logs Section ---
-st.subheader("📋 Audit Logs: Position vs Physical")
-t1, t2 = st.tabs(["Continuous (ROP)", "Periodic (P-System)"])
+st.subheader("📋 Audit Logs")
+t1, t2 = st.tabs(["Continuous (ROP) System", "Periodic (P-System)"])
 
 with t1:
     audit_rop = pd.DataFrame({
         "Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_rop.astype(int),
-        "Pipeline": [sum(q for d, q in pend_rop if d > t and d <= t + lead_time) for t in days]
+        "Pipeline": [sum(q for d, q in pend_rop if d > t and d <= t + lead_time) for t in days],
+        "Position": pos_rop_log.astype(int)
     })
-    audit_rop["Position"] = audit_rop["Physical"] + audit_rop["Pipeline"]
     st.dataframe(audit_rop.set_index("Day"), use_container_width=True)
 
 with t2:
     audit_p = pd.DataFrame({
         "Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_p.astype(int),
-        "Pipeline": [sum(q for d, q in pend_p if d > t and d <= t + lead_time) for t in days]
+        "Pipeline": [sum(q for d, q in pend_p if d > t and d <= t + lead_time) for t in days],
+        "Position": pos_p_log.astype(int)
     })
-    audit_p["Position"] = audit_p["Physical"] + audit_p["Pipeline"]
     st.dataframe(audit_p.set_index("Day"), use_container_width=True)
