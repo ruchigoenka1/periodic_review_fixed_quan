@@ -6,21 +6,29 @@ import plotly.graph_objects as go
 # --- App Config ---
 st.set_page_config(page_title="Inventory Strategy Audit", layout="wide")
 
-# --- Custom CSS for Zoom Toolbar ---
-# Fixed the 'unsafe_allow_html' parameter here
+# --- Custom CSS for Zoom Toolbar Padding ---
 st.markdown("""
     <style>
     /* Adds padding to the left of the sidebar content to dodge the Zoom toolbar */
     section[data-testid="stSidebar"] > div {
-        padding-left: 60px;
-        padding-right: 10px;
+        padding-left: 70px;
+        padding-right: 15px;
     }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("💰 Inventory Simulation: Financial & Operational Audit")
 
-# --- Sidebar Inputs ---
+# --- Sidebar Inputs & Reset Button ---
+st.sidebar.header("Controls")
+# Moved the button to the top for visibility
+if st.sidebar.button("🔄 Generate New Demand Scenario"):
+    # Force a recalculation of demand by clearing the session state key
+    if 'demand_data' in st.session_state:
+        del st.session_state['demand_data']
+    st.rerun()
+
+st.sidebar.divider()
 st.sidebar.header("Operational Parameters")
 avg_demand = st.sidebar.number_input("Avg Daily Demand", value=50)
 std_demand = st.sidebar.number_input("Demand Std Dev", value=10)
@@ -36,7 +44,7 @@ sim_days = st.sidebar.slider("Simulation Horizon (Days)", 30, 365, 90)
 review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
 
 # --- Session State for Demand Persistence ---
-if 'demand_data' not in st.session_state or st.sidebar.button("🔄 Generate New Demand Scenario"):
+if 'demand_data' not in st.session_state:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
 # Sync demand array length with slider
@@ -87,13 +95,13 @@ def run_simulation():
         inv_rop[t] = max(0, pot_rop - daily_demand_arr[t])
         inv_p[t] = max(0, pot_p - daily_demand_arr[t])
         
-        # ROP Logic (Continuous)
+        # ROP Logic
         pos_rop = inv_rop[t] + sum(q for d, q in pend_rop if d > t)
         if pos_rop <= rop:
             pend_rop.append((t + lead_time, eoq))
             tri_rop.append((t, inv_rop[t]))
             
-        # P-System Logic (Periodic)
+        # P-System Logic
         if t % review_period == 0:
             pos_p = inv_p[t] + sum(q for d, q in pend_p if d > t)
             order_qty = max(0, target_level - pos_p)
@@ -105,7 +113,7 @@ def run_simulation():
 
 days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_rop, so_p = run_simulation()
 
-# --- Financial Summary ---
+# --- Financial Analysis Section ---
 hold_rop = inv_rop.sum() * holding_cost_daily
 ord_rop = len(tri_rop) * order_cost
 stock_rop = so_rop * stockout_penalty
@@ -113,7 +121,7 @@ hold_p = inv_p.sum() * holding_cost_daily
 ord_p = len(tri_p) * order_cost
 stock_p = so_p * stockout_penalty
 
-st.subheader("📊 Financial Analysis")
+st.subheader("📊 Financial Performance")
 c1, c2 = st.columns([1, 1.5])
 with c1:
     summary = pd.DataFrame({
@@ -130,22 +138,22 @@ with c2:
     fig_bar.update_layout(template="plotly_dark", height=300, barmode='group')
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- Visualization ---
+# --- Visualization Section ---
 st.subheader("📈 Physical Stock Levels")
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=days, y=inv_rop, name="Continuous Stock", line=dict(color='#636EFA')))
 fig.add_trace(go.Scatter(x=days, y=inv_p, name="Periodic Stock", line=dict(color='#00CC96')))
 if tri_rop:
-    rx, ry = zip(*tri_rop); fig.add_trace(go.Scatter(x=rx, y=ry, mode='markers', name='ROP Trigger', marker=dict(symbol='diamond', color='white')))
+    rx, ry = zip(*tri_rop); fig.add_trace(go.Scatter(x=rx, y=ry, mode='markers', name='ROP Trigger', marker=dict(symbol='diamond', color='white', size=8)))
 if tri_p:
-    px, py = zip(*tri_p); fig.add_trace(go.Scatter(x=px, y=py, mode='markers', name='P-Review Point', marker=dict(symbol='circle', color='yellow')))
+    px, py = zip(*tri_p); fig.add_trace(go.Scatter(x=px, y=py, mode='markers', name='P-Review Point', marker=dict(symbol='circle', color='yellow', size=8)))
 
 fig.add_hline(y=target_level, line_dash="dash", line_color="orange", opacity=0.4, annotation_text="Target S")
 fig.add_hline(y=rop, line_dash="dot", line_color="red", opacity=0.4, annotation_text="ROP")
 fig.update_layout(template="plotly_dark", height=500, hovermode="x unified", legend=dict(orientation="h", y=1.1))
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Detailed Audits ---
+# --- Audit Logs Section ---
 st.subheader("📋 Audit Logs: Position vs Physical")
 t1, t2 = st.tabs(["Continuous (ROP)", "Periodic (P-System)"])
 
