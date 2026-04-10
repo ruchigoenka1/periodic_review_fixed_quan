@@ -28,13 +28,14 @@ ss_rop = z * std_demand * np.sqrt(lead_time)
 rop = (avg_demand * lead_time) + ss_rop
 
 review_period = st.sidebar.slider("Review Period (Days)", 1, 30, 7)
+# For P-System, safety stock covers Lead Time + Review Period
 ss_p = z * std_demand * np.sqrt(review_period + lead_time)
 target_level = (avg_demand * (review_period + lead_time)) + ss_p
 
 # --- Display Key Metrics ---
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    st.metric("EOQ (Order Qty)", f"{int(eoq)}")
+    st.metric("EOQ (Fixed Q)", f"{int(eoq)}")
 with m2:
     st.metric("Reorder Point (ROP)", f"{int(rop)}")
 with m3:
@@ -45,92 +46,96 @@ with m4:
 # --- Simulation Engine ---
 def run_simulation():
     days = np.arange(sim_days)
-    daily_demand = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
+    # Generate demand for all days
+    daily_demand_arr = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
     
+    # ROP Simulation State
     inv_rop = np.zeros(sim_days)
     inv_rop[0] = eoq + ss_rop
     pending_orders_rop = [] 
-    order_triggers_rop = [] # To store (day, level) for dots
+    order_triggers_rop = []
 
+    # Periodic Simulation State
     inv_p = np.zeros(sim_days)
     inv_p[0] = target_level
     pending_orders_p = []
-    order_triggers_p = [] # To store (day, level) for dots
+    order_triggers_p = []
 
     for t in range(1, sim_days):
-        rop_arrival = sum(qty for day, qty in pending_orders_rop if day == t)
-        p_arrival = sum(qty for day, qty in pending_orders_p if day == t)
+        # 1. Process arrivals first
+        rop_arrival = sum(qty for arrival_t, qty in pending_orders_rop if arrival_t == t)
+        p_arrival = sum(qty for arrival_t, qty in pending_orders_p if arrival_t == t)
         
-        inv_rop[t] = max(0, inv_rop[t-1] - daily_demand[t] + rop_arrival)
-        inv_p[t] = max(0, inv_p[t-1] - daily_demand[t] + p_arrival)
+        # 2. Update physical inventory after demand
+        inv_rop[t] = max(0, inv_rop[t-1] - daily_demand_arr[t] + rop_arrival)
+        inv_p[t] = max(0, inv_p[t-1] - daily_demand_arr[t] + p_arrival)
         
-        # Continuous Trigger
-        on_order_rop = sum(qty for day, qty in pending_orders_rop if day > t)
-        if (inv_rop[t] + on_order_rop) <= rop:
+        # 3. Continuous Review (ROP)
+        on_hand_on_order_rop = inv_rop[t] + sum(qty for arrival_t, qty in pending_orders_rop if arrival_t > t)
+        if on_hand_on_order_rop <= rop:
             pending_orders_rop.append((t + lead_time, eoq))
             order_triggers_rop.append((t, inv_rop[t]))
             
-        # Periodic Trigger
+        # 4. Periodic Review (P-System)
         if t % review_period == 0:
-            on_order_p = sum(qty for day, qty in pending_orders_p if day > t)
-            needed = target_level - (inv_p[t] + on_order_p)
-            if needed > 0:
-                pending_orders_p.append((t + lead_time, needed))
+            on_hand_on_order_p = inv_p[t] + sum(qty for arrival_t, qty in pending_orders_p if arrival_t > t)
+            order_qty = target_level - on_hand_on_order_p
+            if order_qty > 0:
+                pending_orders_p.append((t + lead_time, order_qty))
                 order_triggers_p.append((t, inv_p[t]))
                 
-    return days, inv_rop, inv_p, demands, order_triggers_rop, order_triggers_p
+    return days, inv_rop, inv_p, daily_demand_arr, order_triggers_rop, order_triggers_p
 
-days, inv_rop, inv_p, demands, triggers_rop, triggers_p = run_simulation()
+# Execute Simulation
+days, inv_rop, inv_p, daily_demand_arr, triggers_rop, triggers_p = run_simulation()
 
 # --- Visualization ---
 fig = go.Figure()
 
-# Lines
+# Plot Lines
 fig.add_trace(go.Scatter(x=days, y=inv_rop, name="Continuous (ROP)", line=dict(color='#636EFA', width=2)))
 fig.add_trace(go.Scatter(x=days, y=inv_p, name="Periodic (P-System)", line=dict(color='#00CC96', width=2)))
 
-# Trigger Points (Markers)
+# Trigger Markers
 if triggers_rop:
-    tx_rop, ty_rop = zip(*triggers_rop)
-    fig.add_trace(go.Scatter(x=tx_rop, y=ty_rop, mode='markers', name='ROP Order Placed', 
-                             marker=dict(color='blue', size=10, symbol='diamond')))
-
+    tx_r, ty_r = zip(*triggers_rop)
+    fig.add_trace(go.Scatter(x=tx_r, y=ty_r, mode='markers', name='ROP Trigger', 
+                             marker=dict(color='blue', size=8, symbol='diamond')))
 if triggers_p:
     tx_p, ty_p = zip(*triggers_p)
-    fig.add_trace(go.Scatter(x=tx_p, y=ty_p, mode='markers', name='P-System Review', 
-                             marker=dict(color='green', size=10, symbol='circle')))
+    fig.add_trace(go.Scatter(x=tx_p, y=ty_p, mode='markers', name='Review Point', 
+                             marker=dict(color='green', size=8, symbol='circle')))
 
-# ROP and Target Level Reference Lines
-fig.add_hline(y=rop, line_dash="dot", line_color="red", annotation_text="ROP Level")
-fig.add_hline(y=target_level, line_dash="dash", line_color="orange", annotation_text="P-System Target")
+# Horizontal Target Lines
+fig.add_hline(y=rop, line_dash="dot", line_color="rgba(255,0,0,0.5)", annotation_text="ROP")
+fig.add_hline(y=target_level, line_dash="dash", line_color="rgba(255,165,0,0.5)", annotation_text="Target S")
 
 fig.update_layout(
-    title="Inventory Simulation with Order Points",
-    xaxis_title="Day",
-    yaxis_title="Units on Hand",
-    template="plotly_dark",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    height=600
+    title="Inventory Level Simulation",
+    xaxis_title="Day", yaxis_title="Units",
+    template="plotly_dark", height=600,
+    hovermode="x unified"
 )
 st.plotly_chart(fig, use_container_width=True)
 
 # --- Summary Statistics ---
-st.subheader("Model Performance Summary")
+st.subheader("Results Table")
 col_stats, col_table = st.columns([1, 2])
 
 with col_stats:
-    stats = pd.DataFrame({
-        "Metric": ["Min Stock", "Stockout Days", "Total Orders", "Avg Inventory"],
-        "Continuous": [int(inv_rop.min()), (inv_rop <= 0).sum(), len(triggers_rop), int(inv_rop.mean())],
-        "Periodic": [int(inv_p.min()), (inv_p <= 0).sum(), len(triggers_p), int(inv_p.mean())]
+    stats_df = pd.DataFrame({
+        "Metric": ["Stockout Days", "Total Orders", "Avg Inventory"],
+        "Continuous": [(inv_rop <= 0).sum(), len(triggers_rop), int(inv_rop.mean())],
+        "Periodic": [(inv_p <= 0).sum(), len(triggers_p), int(inv_p.mean())]
     })
-    st.table(stats)
+    st.table(stats_df)
 
 with col_table:
-    df_log = pd.DataFrame({
+    # Fix: Correctly using daily_demand_arr here
+    log_df = pd.DataFrame({
         "Day": days,
-        "Demand": demands.astype(int),
+        "Demand": daily_demand_arr.astype(int),
         "Stock (ROP)": inv_rop.astype(int),
-        "Stock (Periodic)": inv_p.astype(int)
+        "Stock (P-System)": inv_p.astype(int)
     }).set_index("Day")
-    st.dataframe(df_log, height=300, use_container_width=True)
+    st.dataframe(log_df, height=300, use_container_width=True)
