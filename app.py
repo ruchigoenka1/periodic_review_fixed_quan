@@ -38,7 +38,7 @@ st.sidebar.divider()
 st.sidebar.header("Model Settings")
 service_level = st.sidebar.select_slider("Service Level (%)", options=[80, 85, 90, 95, 98, 99], value=95)
 sim_days = st.sidebar.slider("Simulation Horizon (Days)", 30, 365, 90)
-review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
+review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 100, 7)
 
 # --- Session State for Demand Persistence ---
 if 'demand_data' not in st.session_state:
