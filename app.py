@@ -18,12 +18,12 @@ st.markdown("""
 
 st.title("💰 Inventory Simulation: Financial & Operational Audit")
 
-# --- 1. CAPTURE CONTROLS FIRST (Crucial for State Sync) ---
+# --- 1. CAPTURE CONTROLS ---
 st.sidebar.header("Controls")
 sim_days = st.sidebar.slider("Simulation Horizon (Days)", 30, 365, 90)
-review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
+# Increased range to 100
+review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 100, 7)
 
-# Generate Button Logic
 if st.sidebar.button("🔄 Generate New Demand Scenario"):
     st.session_state['demand_data'] = None
     st.rerun()
@@ -36,10 +36,11 @@ lead_time = st.sidebar.number_input("Lead Time (Days)", value=5, min_value=1)
 order_cost = st.sidebar.number_input("Ordering Cost ($/order)", value=100.0)
 holding_cost_annual = st.sidebar.number_input("Holding Cost ($/unit/year)", value=2.0)
 stockout_penalty = st.sidebar.number_input("Stockout Penalty ($/unit)", value=5.0)
+
+# Moved Service Level here so it doesn't trigger a demand renewal logic reset
 service_level = st.sidebar.select_slider("Service Level (%)", options=[80, 85, 90, 95, 98, 99], value=95)
 
 # --- 2. DEMAND STATE MANAGEMENT ---
-# This checks if the existing data matches the current slider length
 if 'demand_data' not in st.session_state or st.session_state['demand_data'] is None or len(st.session_state['demand_data']) != sim_days:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
