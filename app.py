@@ -9,7 +9,6 @@ st.set_page_config(page_title="Inventory Strategy Audit", layout="wide")
 # --- Custom CSS for Zoom Toolbar Padding ---
 st.markdown("""
     <style>
-    /* Safe zone for iPad Zoom toolbar */
     section[data-testid="stSidebar"] > div {
         padding-left: 70px;
         padding-right: 15px;
@@ -19,10 +18,12 @@ st.markdown("""
 
 st.title("💰 Inventory Simulation: Financial & Operational Audit")
 
-# --- Sidebar Controls ---
+# --- 1. CAPTURE CONTROLS FIRST (Crucial for State Sync) ---
 st.sidebar.header("Controls")
 sim_days = st.sidebar.slider("Simulation Horizon (Days)", 30, 365, 90)
+review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 30, 7)
 
+# Generate Button Logic
 if st.sidebar.button("🔄 Generate New Demand Scenario"):
     st.session_state['demand_data'] = None
     st.rerun()
@@ -36,70 +37,63 @@ order_cost = st.sidebar.number_input("Ordering Cost ($/order)", value=100.0)
 holding_cost_annual = st.sidebar.number_input("Holding Cost ($/unit/year)", value=2.0)
 stockout_penalty = st.sidebar.number_input("Stockout Penalty ($/unit)", value=5.0)
 service_level = st.sidebar.select_slider("Service Level (%)", options=[80, 85, 90, 95, 98, 99], value=95)
-review_period = st.sidebar.slider("P-System Review Frequency (Days)", 1, 100, 7)
 
-# --- Demand State Management ---
+# --- 2. DEMAND STATE MANAGEMENT ---
+# This checks if the existing data matches the current slider length
 if 'demand_data' not in st.session_state or st.session_state['demand_data'] is None or len(st.session_state['demand_data']) != sim_days:
     st.session_state['demand_data'] = np.maximum(0, np.random.normal(avg_demand, std_demand, sim_days))
 
 daily_demand_arr = st.session_state['demand_data']
 
-# --- Core Math Calculations ---
+# --- 3. MATH CALCULATIONS ---
 z_map = {80: 0.84, 85: 1.04, 90: 1.28, 95: 1.645, 98: 2.05, 99: 2.33}
 z = z_map[service_level]
 holding_cost_daily = holding_cost_annual / 365
 
-# 1. Continuous Review Calculations
+# ROP Calcs
 annual_demand = avg_demand * 365
 eoq = np.sqrt((2 * annual_demand * order_cost) / holding_cost_annual)
 ss_rop = z * std_demand * np.sqrt(lead_time)
 rop = (avg_demand * lead_time) + ss_rop
 
-# 2. Periodic Review Calculations
+# P-System Calcs
 ss_p = z * std_demand * np.sqrt(review_period + lead_time)
 target_level = (avg_demand * (review_period + lead_time)) + ss_p
 
-# --- High-Level Metric Cards ---
+# --- UI DISPLAY ---
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("EOQ (Order Size)", f"{int(eoq)}")
+m1.metric("EOQ (Fixed Q)", f"{int(eoq)}")
 m2.metric("Reorder Point (ROP)", f"{int(rop)}")
 m3.metric("Target Level (S)", f"{int(target_level)}")
 m4.metric("Safety Stock (P)", f"{int(ss_p)}")
 
-# --- Simulation Engine ---
+# --- SIMULATION ENGINE ---
 def run_simulation():
     days = np.arange(sim_days)
     inv_rop = np.zeros(sim_days); inv_rop[0] = eoq + ss_rop
     pos_rop_log = np.zeros(sim_days); pend_rop = []; tri_rop = []; so_units_rop = 0
-    
     inv_p = np.zeros(sim_days); inv_p[0] = target_level
     pos_p_log = np.zeros(sim_days); pend_p = []; tri_p = []; so_units_p = 0
 
     for t in range(1, sim_days):
-        # 1. Deliveries arriving today
         arr_rop = sum(q for d, q in pend_rop if d == t)
         arr_p = sum(q for d, q in pend_p if d == t)
-        
-        # 2. Pre-demand potential
         pot_rop = inv_rop[t-1] + arr_rop
         pot_p = inv_p[t-1] + arr_p
         
-        # 3. Track Stockouts
         if pot_rop < daily_demand_arr[t]: so_units_rop += (daily_demand_arr[t] - pot_rop)
         if pot_p < daily_demand_arr[t]: so_units_p += (daily_demand_arr[t] - pot_p)
 
-        # 4. Final Physical Inventory for the day
         inv_rop[t] = max(0, pot_rop - daily_demand_arr[t])
         inv_p[t] = max(0, pot_p - daily_demand_arr[t])
         
-        # 5. Continuous Logic (Position)
+        # Position Logic
         pos_rop = inv_rop[t] + sum(q for d, q in pend_rop if d > t)
         pos_rop_log[t] = pos_rop
         if pos_rop <= rop:
             pend_rop.append((t + lead_time, eoq))
             tri_rop.append((t, inv_rop[t]))
             
-        # 6. Periodic Logic (Position)
         pos_p = inv_p[t] + sum(q for d, q in pend_p if d > t)
         if t % review_period == 0:
             order_qty = max(0, target_level - pos_p)
@@ -111,9 +105,9 @@ def run_simulation():
                 
     return days, inv_rop, inv_p, tri_rop, tri_p, pend_rop, pend_p, so_units_rop, so_units_p, pos_rop_log, pos_p_log
 
-days, inv_rop, inv_p, tri_rop, tri_p, p_rop, p_p, so_rop, so_p, pos_rop, pos_p = run_simulation()
+days, inv_rop, inv_p, tri_rop, tri_p, p_rop, p_p, so_rop, so_p, pos_rop_l, pos_p_l = run_simulation()
 
-# --- Financial Analysis Section ---
+# --- FINANCIALS ---
 hold_rop = inv_rop.sum() * holding_cost_daily
 ord_rop = len(tri_rop) * order_cost
 stock_rop = so_rop * stockout_penalty
@@ -121,7 +115,7 @@ hold_p = inv_p.sum() * holding_cost_daily
 ord_p = len(tri_p) * order_cost
 stock_p = so_p * stockout_penalty
 
-st.subheader("📊 Financial Performance Comparison")
+st.subheader("📊 Financial Performance")
 c1, c2 = st.columns([1, 1.5])
 with c1:
     summary = pd.DataFrame({
@@ -138,15 +132,13 @@ with c2:
     fig_bar.update_layout(template="plotly_dark", height=300, barmode='group')
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- Visualization Section ---
+# --- VISUALIZATION ---
 st.subheader("📈 Inventory Levels: Physical vs. Position")
 fig = go.Figure()
-# Physical Stock
 fig.add_trace(go.Scatter(x=days, y=inv_rop, name="Continuous (Physical)", line=dict(color='#636EFA', width=3)))
 fig.add_trace(go.Scatter(x=days, y=inv_p, name="Periodic (Physical)", line=dict(color='#00CC96', width=3)))
-# Inventory Position (Dotted)
-fig.add_trace(go.Scatter(x=days, y=pos_rop, name="Continuous (Position)", line=dict(color='#636EFA', width=1, dash='dot')))
-fig.add_trace(go.Scatter(x=days, y=pos_p, name="Periodic (Position)", line=dict(color='#00CC96', width=1, dash='dot')))
+fig.add_trace(go.Scatter(x=days, y=pos_rop_l, name="Continuous (Position)", line=dict(color='#636EFA', width=1, dash='dot')))
+fig.add_trace(go.Scatter(x=days, y=pos_p_l, name="Periodic (Position)", line=dict(color='#00CC96', width=1, dash='dot')))
 
 if tri_rop:
     rx, ry = zip(*tri_rop); fig.add_trace(go.Scatter(x=rx, y=ry, mode='markers', name='ROP Trigger', marker=dict(symbol='diamond', color='white', size=8)))
@@ -158,13 +150,12 @@ fig.add_hline(y=rop, line_dash="dot", line_color="red", opacity=0.4, annotation_
 fig.update_layout(template="plotly_dark", height=600, hovermode="x unified", legend=dict(orientation="h", y=1.08))
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Audit Logs Section ---
-st.subheader("📋 Detailed Audit Logs")
-t1, t2 = st.tabs(["Continuous (ROP)", "Periodic (P-System)"])
-
+# --- AUDIT LOGS ---
+st.subheader("📋 Audit Logs")
+t1, t2 = st.tabs(["Continuous Audit", "Periodic Audit"])
 with t1:
-    audit_rop = pd.DataFrame({"Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_rop.astype(int), "Position": pos_rop.astype(int)})
+    audit_rop = pd.DataFrame({"Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_rop.astype(int), "Position": pos_rop_l.astype(int)})
     st.dataframe(audit_rop.set_index("Day"), use_container_width=True)
 with t2:
-    audit_p = pd.DataFrame({"Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_p.astype(int), "Position": pos_p.astype(int)})
+    audit_p = pd.DataFrame({"Day": days, "Demand": daily_demand_arr.astype(int), "Physical": inv_p.astype(int), "Position": pos_p_l.astype(int)})
     st.dataframe(audit_p.set_index("Day"), use_container_width=True)
