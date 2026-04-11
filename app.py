@@ -16,7 +16,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💰 Inventory Simulation: Financial & Operational Audit")
+st.title("💰 Inventory Simulation: Continous Monitoring vs Periodic Monitoring")
 
 # --- 1. CAPTURE CONTROLS ---
 st.sidebar.header("Controls")
